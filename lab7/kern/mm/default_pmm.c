@@ -7,9 +7,9 @@
    on receiving a request for memory, scans along the list for the first block that is large enough to
    satisfy the request. If the chosen block is significantly larger than that requested, then it is 
    usually split, and the remainder added to the list as another free block.
-   Please see Page 196~198, Section 8.2 of Yan Wei Ming's chinese book "Data Structure -- C programming language"
+   Please see Page 196~198, Section 8.2 of Yan Wei Min's chinese book "Data Structure -- C programming language"
 */
-// LAB2 EXERCISE 1: YOUR CODE
+// LAB2 EXERCISE 1: 2012012617
 // you should rewrite functions: default_init,default_init_memmap,default_alloc_pages, default_free_pages.
 /*
  * Details of FFMA
@@ -77,6 +77,7 @@ default_init_memmap(struct Page *base, size_t n) {
         set_page_ref(p, 0);
         list_add_before(&free_list, &(p->page_link));
     }
+
     nr_free += n;
     //first block
     base->property = n;
@@ -156,7 +157,6 @@ default_free_pages(struct Page *base, size_t n) {
         p = le2page(le,page_link);
       }
     }
-
     nr_free += n;
     return ;
 }

@@ -105,7 +105,7 @@ int philosopher_using_semaphore(void * arg) /* i：哲学家号码，从0到N-1 
 
 struct proc_struct *philosopher_proc_condvar[N]; // N philosopher
 int state_condvar[N];                            // the philosopher's state: EATING, HUNGARY, THINKING  
-monitor_t mt, *mtp=&mt;                                    // mp is mutex semaphore for monitor's procedures
+monitor_t mt, *mtp=&mt;                          // monitor
 
 void phi_test_condvar (i) { 
     if(state_condvar[i]==HUNGRY&&state_condvar[LEFT]!=EATING
@@ -121,17 +121,16 @@ void phi_test_condvar (i) {
 void phi_take_forks_condvar(int i) {
      down(&(mtp->mutex));
 //--------into routine in monitor--------------
-     // LAB7 EXERCISE1: YOUR CODE
-     // I am hungry
-     // try to get fork
-      // I am hungry
-      state_condvar[i]=HUNGRY; 
-      // try to get fork
-      phi_test_condvar(i); 
-      while (state_condvar[i] != EATING) {
-          cprintf("phi_take_forks_condvar: %d didn't get fork and will wait\n",i);
-          cond_wait(&mtp->cv[i]);
-      }
+    // LAB7 EXERCISE1: 2012012617
+    // I am hungry
+    state_condvar[i]=HUNGRY;
+    // try to get fork
+    cprintf("phi_take_forks_condvar: %d try to take forks\n",i);
+    phi_test_condvar(i);
+    if (state_condvar[i] != EATING) {
+        cprintf("phi_take_forks_condvar: %d didn't get forks and will wait\n");
+        cond_wait(&mtp->cv[i]);
+    }
 //--------leave routine in monitor--------------
       if(mtp->next_count>0)
          up(&(mtp->next));
@@ -143,14 +142,13 @@ void phi_put_forks_condvar(int i) {
      down(&(mtp->mutex));
 
 //--------into routine in monitor--------------
-     // LAB7 EXERCISE1: YOUR CODE
-     // I ate over
-     // test left and right neighbors
-      // I ate over 
-      state_condvar[i]=THINKING;
-      // test left and right neighbors
-      phi_test_condvar(LEFT);
-      phi_test_condvar(RIGHT);
+    // LAB7 EXERCISE1: 2012012617
+    // I ate over
+    cprintf("phi_put_forks_condvar: %d put forks back\n",i);
+    state_condvar[i]=THINKING;
+    // test left and right neighbors
+    phi_test_condvar(LEFT);
+    phi_test_condvar(RIGHT);
 //--------leave routine in monitor--------------
      if(mtp->next_count>0)
         up(&(mtp->next));
