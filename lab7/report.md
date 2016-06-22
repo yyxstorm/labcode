@@ -1,47 +1,448 @@
-# 操作系统Lab7实验报告
+###lab7-report
 
-2012011289
-计22
-姚宇轩
+#练习零
 
-## 重要知识点及关系
-进程状态转移模型，对应代码中的wait.[ch]中的队列，应用在信号灯中
-信号灯机制，对应sem.[ch]中的定义，在check_sync.c中用它实现了哲学家就餐问题的第一种解法
-以信号灯机制为基础的管程机制，对应monitor.[ch]中的定义，在check_sync.c中用它实现了哲学家就餐问题的第二种解法
-临界区和互斥锁的概念，在实验中由信号灯实现
+直接粘贴lab6需要更新的代码就可以。
 
-## 未涉及重要知识点
-自旋锁
-基于软件的同步互斥解决方案
+#练习一
 
-## 练习0：填写已有实验
-用meld。注意trap.c中trap_dispatch函数中的时钟中断函数调用要更新为run_timer_list();。
+首先执行make grade命令，得到如下的结果：
+```
+zyl@ubuntu:~/Documents/ucore_lab-master/labcodes/lab7$ make grade
+badsegment:              (4.5s)
+  -check result:                             OK
+  -check output:                             OK
+divzero:                 (4.5s)
+  -check result:                             OK
+  -check output:                             OK
+softint:                 (4.2s)
+  -check result:                             OK
+  -check output:                             OK
+faultread:               (3.1s)
+  -check result:                             OK
+  -check output:                             OK
+faultreadkernel:         (3.0s)
+  -check result:                             OK
+  -check output:                             OK
+hello:                   (3.9s)
+  -check result:                             OK
+  -check output:                             OK
+testbss:                 (3.6s)
+  -check result:                             OK
+  -check output:                             OK
+pgdir:                   (4.2s)
+  -check result:                             OK
+  -check output:                             OK
+yield:                   (3.7s)
+  -check result:                             OK
+  -check output:                             OK
+badarg:                  (4.2s)
+  -check result:                             OK
+  -check output:                             OK
+exit:                    (3.6s)
+  -check result:                             OK
+  -check output:                             OK
+spin:                    (3.6s)
+  -check result:                             OK
+  -check output:                             OK
+waitkill:                (3.9s)
+  -check result:                             OK
+  -check output:                             OK
+forktest:                (3.7s)
+  -check result:                             OK
+  -check output:                             OK
+forktree:                (4.2s)
+  -check result:                             OK
+  -check output:                             OK
+priority:                (22.9s)
+  -check result:                             OK
+  -check output:                             OK
+sleep:                   (13.1s)
+  -check result:                             OK
+  -check output:                             OK
+sleepkill:               (5.4s)
+  -check result:                             OK
+  -check output:                             OK
+matrix:                  (90.7s)
+  -check result:                             OK
+  -check output:                             OK
+Total Score: 190/190
 
-## 练习1: 理解内核级信号量的实现和基于内核级信号量的哲学家就餐问题
-用一个信号灯变量mutex保证对共享变量state_sema写的互斥性，每个哲学家有一个信号灯表示自己请求的叉子是否可用。如果想拿起叉子但拿不到则睡在这个信号灯上，当被唤醒并获得cpu时叉子已可使用，便开始就餐；放下叉子时尝试唤醒两边的哲学家进行就餐。
+```
+都正确了
 
-### 请在实验报告中给出内核级信号量的设计描述，并说其大致执行流流程。
-信号灯的基础是一个表示空闲的资源使用权数量的数字和表示等待资源使用权的进程队列，基本操作是请求使用权的P操作和释放使用权的V操作。P操作基本过程是：如果有使用权剩余，则获得之（修改计数）并返回继续执行，否则进程进入该信号灯的等待队列并调用schedule交出cpu，直到被其他进程唤醒时进入就绪队列，获得cpu使用权时从schedule后开始，离开等待队列并继续操作。V操作的基本过程是：如果等待队列不为空则唤醒队列中第一个等待进程，放入就绪队列，否则空闲资源计数加一即可。
+内核级信号量
+```
+typedef struct {
+    int value;
+    wait_queue_t wait_queue;
+} semaphore_t;
 
-### 请在实验报告中给出给用户态进程/线程提供信号量机制的设计方案，并比较说明给内核级提供信号量机制的异同。
-用户态实现的主要问题是没有权限，不能直接操作进程状态、进行进程切换和调度，无法使用特权指令如cli。解决也不难，把信号灯机制用系统调用包装起来提供给用户即可。更复杂一点的解决方案是写一个用户态的库实现信号灯机制，在权限不够的地方则使用系统调用完成，也就是说把现在的信号灯相关代码写到用户库里，其中需要特殊权限的操作改为系统调用。
+void sem_init(semaphore_t *sem, int value);
+void up(semaphore_t *sem);
+void down(semaphore_t *sem);
+bool try_down(semaphore_t *sem);
+```
+描述当时资源的值和带有一个等待的队列，这些函数当中有init构建初始化函数先进行执行，在而up和down函数是调用_up和_down两个函数，相当于PV操作，而trydown是一个尝试函数，在down当中进行判断
+```
+static __noinline void __up(semaphore_t *sem, uint32_t wait_state) {
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        wait_t *wait;
+        if ((wait = wait_queue_first(&(sem->wait_queue))) == NULL) {
+            sem->value ++;
+        }
+        else {
+            assert(wait->proc->wait_state == wait_state);
+            wakeup_wait(&(sem->wait_queue), wait, wait_state, 1);
+        }
+    }
+    local_intr_restore(intr_flag);
+}
+```
+```
+static __noinline uint32_t __down(semaphore_t *sem, uint32_t wait_state) {
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    if (sem->value > 0) {
+        sem->value --;
+        local_intr_restore(intr_flag);
+        return 0;
+    }
+    wait_t __wait, *wait = &__wait;
+    wait_current_set(&(sem->wait_queue), wait, wait_state);
+    local_intr_restore(intr_flag);
 
-## 练习2: 完成内核级条件变量和基于内核级条件变量的哲学家就餐问题
-此处用管程解决了哲学家就餐问题，管程的基本运行机制见下文。管程管理的数据只有state_condvar，各个哲学家的请求通过管程互斥化，每个哲学家有一个管程中的条件变量表示他所请求的叉子目前是否就绪。和上一种实现的区别其实只是把mutex和信号灯列表以管程的mutex和条件变量列表的形式重新表达了一遍而已，运行机制也是，不再赘述。
+    schedule();
 
-### 请在实验报告中给出内核级条件变量的设计描述，并说其大致执行流流程。
-条件变量主体是一个信号灯，含有等待该条件变量为真的进程列表，是管程机制的一部分。管程是各个进程访问某数据的通用接口，由于它同一时刻只受理一个进程的请求，因此完成了对数据的互斥共享。单纯的管程是不可用的，因为如果占用管程的进程等待某条件，而该条件需要其他进程进入管程才能改变则会发生二者的死锁。为解决这一问题引入了条件变量，让等待某条件的进程进入睡眠释放管程使用权，在条件满足时被唤醒。因此管程机制中有四种进程：等待进入管程的进程（mutex等待列表），正在占用管程的进程，已进入管程但是因为等待某个条件变量而在沉睡的进程（某个cv的等待列表），已进入管程但是在运行中因为唤醒其他进程而交出了管程占用权（管程只受理一个进程的请求的限制）进入沉睡的进程（next等待列表）。管程机制基本就是在这四种状态之间的转换：触发条件变量（cond_signal）时如该条件变量有进程等待则唤醒他而自己进入next沉睡；
-等待条件变量（cond_wait）时唤醒next或mutex列表中的某个进程而自己进入该cv沉睡。
+    local_intr_save(intr_flag);
+    wait_current_del(&(sem->wait_queue), wait);
+    local_intr_restore(intr_flag);
 
-### 请在实验报告中给出给用户态进程/线程提供条件变量机制的设计方案，并比较说明给内核级提供条件变量机制的异同。
-和上述用户态信号灯机制一样。
+    if (wait->wakeup_flags != wait_state) {
+        return wait->wakeup_flags;
+    }
+    return 0;
+}
+```
+在进行同步和互斥的操作的时候需要信号量实现这两个机制来保证os的正常运行，资源不会因为同时需要访问或者同步的原因发生错误。
 
-### 我的设计实现过程
-搞清楚上述管程的概念和运行过程，monitor结构体和condvar结构体各变量的定义，结合注释设计实现管程机制并不难。
 
-### 和标准答案的差别
-都是从注释来的，差别不大，有以下几条：
-1.phi_take_forks_condvar函数中用不着while循环，一个if就够了。因为cond_wait后如果被唤醒则必然处于EATING状态，不用再测试一遍。
-2.前置++和--改成后置，提高一点效率。
-3.按照概念，down函数是沉睡的主体，对沉睡列表的计数应紧密围绕在它旁边，因此代码顺序不同。
-4.写了一点新的输出，会更清楚一些。
+用户态进程和线程信号量的实现可以依照内核进程和用户态进程的方法，在用户态使用一个虚拟的进程信号量，实际上内核维护一个对应的信号量，当需要进行操作的时候进行一次中断从用户态跳转到内核态，维护内核态对应的信号量，用内核态的信号量顶替用户态的信号量。
+
+
+#练习二
+
+monitor文件当中只需要把mt对应成为指向cvp的owner的指针，之后按照伪代码写下来就可以了，在此就不赘述了.
+
+哲学家问题中在第一个需要添加代码的地方
+```
+state_condvar[i]=HUNGRY;
+if ((state_condvar[LEFT]!=EATING)&&(state_condvar[RIGHT]!=EATING))
+      {
+         cprintf("phi_test_condvar: state_condvar[%d] will eating\n",i);
+          state_condvar[i]=EATING;
+      }
+      else{
+          cond_wait(&(mtp->cv[i]));
+      }
+```
+哲学家是饥饿的，如果左右都没有在吃饭，那么他就可以开始吃了，如果有，那么他进入等待过程，按照注释实现代码即可。
+
+第二个需要添加代码的地方
+```
+state_condvar[i] = THINKING;
+phi_test_condvar(LEFT);
+phi_test_condvar(RIGHT);
+```
+哲学家放下筷子进行思考，对于他左右两边的人进行检测是否满足可以吃饭的要求。
+
+最终得到结果如下所示，make grade也正确
+```
+I am No.4 philosopher_condvar
+Iter 1, No.4 philosopher_condvar is thinking
+I am No.3 philosopher_condvar
+Iter 1, No.3 philosopher_condvar is thinking
+I am No.2 philosopher_condvar
+Iter 1, No.2 philosopher_condvar is thinking
+I am No.1 philosopher_condvar
+Iter 1, No.1 philosopher_condvar is thinking
+I am No.0 philosopher_condvar
+Iter 1, No.0 philosopher_condvar is thinking
+I am No.4 philosopher_sema
+Iter 1, No.4 philosopher_sema is thinking
+I am No.3 philosopher_sema
+Iter 1, No.3 philosopher_sema is thinking
+I am No.2 philosopher_sema
+Iter 1, No.2 philosopher_sema is thinking
+I am No.1 philosopher_sema
+Iter 1, No.1 philosopher_sema is thinking
+I am No.0 philosopher_sema
+Iter 1, No.0 philosopher_sema is thinking
+kernel_execve: pid = 2, name = "matrix".
+fork ok.
+pid 13 is running (1000 times)!.
+pid 23 is running (37100 times)!.
+pid 20 is running (37100 times)!.
+pid 25 is running (23500 times)!.
+Iter 1, No.0 philosopher_sema is eating
+pid 17 is running (4600 times)!.
+pid 24 is running (4600 times)!.
+pid 28 is running (4600 times)!.
+pid 26 is running (2600 times)!.
+pid 30 is running (13100 times)!.
+pid 19 is running (20600 times)!.
+pid 14 is running (1000 times)!.
+pid 15 is running (1100 times)!.
+pid 32 is running (26600 times)!.
+pid 33 is running (13100 times)!.
+pid 27 is running (23500 times)!.
+pid 21 is running (2600 times)!.
+pid 18 is running (11000 times)!.
+pid 22 is running (13100 times)!.
+Iter 1, No.3 philosopher_sema is eating
+pid 16 is running (1900 times)!.
+phi_test_condvar: state_condvar[0] will eating
+Iter 1, No.0 philosopher_condvar is eating
+phi_test_condvar: state_condvar[2] will eating
+Iter 1, No.2 philosopher_condvar is eating
+cond_wait begin:  cvp c03a769c, cvp->count 0, cvp->owner->next_count 0
+cond_wait begin:  cvp c03a76d8, cvp->count 0, cvp->owner->next_count 0
+pid 29 is running (33400 times)!.
+pid 31 is running (2600 times)!.
+cond_wait begin:  cvp c03a76c4, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[3] will eating
+phi_test_condvar: signal self_cv[3] 
+cond_signal begin: cvp c03a76c4, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a76c4, cvp->count 0, cvp->owner->next_count 1
+Iter 1, No.3 philosopher_condvar is eating
+Iter 2, No.3 philosopher_sema is thinking
+Iter 1, No.2 philosopher_sema is eating
+Iter 2, No.0 philosopher_sema is thinking
+Iter 1, No.4 philosopher_sema is eating
+Iter 2, No.4 philosopher_sema is thinking
+Iter 2, No.2 philosopher_sema is thinking
+Iter 2, No.3 philosopher_sema is eating
+cond_signal end: cvp c03a76c4, cvp->count 0, cvp->owner->next_count 0
+Iter 2, No.2 philosopher_condvar is thinking
+phi_test_condvar: state_condvar[1] will eating
+phi_test_condvar: signal self_cv[1] 
+cond_signal begin: cvp c03a769c, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a769c, cvp->count 0, cvp->owner->next_count 1
+Iter 1, No.1 philosopher_condvar is eating
+cond_signal end: cvp c03a769c, cvp->count 0, cvp->owner->next_count 0
+Iter 2, No.0 philosopher_condvar is thinking
+Iter 2, No.1 philosopher_condvar is thinking
+phi_test_condvar: state_condvar[4] will eating
+phi_test_condvar: signal self_cv[4] 
+cond_signal begin: cvp c03a76d8, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a76d8, cvp->count 0, cvp->owner->next_count 1
+Iter 1, No.4 philosopher_condvar is eating
+pid 13 done!.
+Iter 3, No.3 philosopher_sema is thinking
+Iter 2, No.2 philosopher_sema is eating
+Iter 2, No.0 philosopher_sema is eating
+Iter 3, No.2 philosopher_sema is thinking
+Iter 3, No.0 philosopher_sema is thinking
+Iter 1, No.1 philosopher_sema is eating
+Iter 2, No.4 philosopher_sema is eating
+pid 15 done!.
+Iter 2, No.1 philosopher_sema is thinking
+Iter 2, No.1 philosopher_sema is eating
+cond_signal end: cvp c03a76d8, cvp->count 0, cvp->owner->next_count 0
+Iter 2, No.3 philosopher_condvar is thinking
+Iter 2, No.4 philosopher_condvar is thinking
+phi_test_condvar: state_condvar[2] will eating
+Iter 2, No.2 philosopher_condvar is eating
+Iter 3, No.1 philosopher_sema is thinking
+Iter 3, No.1 philosopher_sema is eating
+cond_wait begin:  cvp c03a769c, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[4] will eating
+Iter 2, No.4 philosopher_condvar is eating
+cond_wait begin:  cvp c03a7688, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[1] will eating
+phi_test_condvar: signal self_cv[1] 
+cond_signal begin: cvp c03a769c, cvp->count 1, cvp->owner->next_count 0
+Iter 3, No.4 philosopher_sema is thinking
+Iter 3, No.3 philosopher_sema is eating
+Iter 4, No.3 philosopher_sema is thinking
+cond_wait end:  cvp c03a769c, cvp->count 0, cvp->owner->next_count 1
+Iter 2, No.1 philosopher_condvar is eating
+cond_signal end: cvp c03a769c, cvp->count 0, cvp->owner->next_count 0
+Iter 3, No.2 philosopher_condvar is thinking
+cond_wait begin:  cvp c03a76c4, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[3] will eating
+phi_test_condvar: signal self_cv[3] 
+cond_signal begin: cvp c03a76c4, cvp->count 1, cvp->owner->next_count 0
+pid 14 done!.
+Iter 4, No.1 philosopher_sema is thinking
+Iter 3, No.2 philosopher_sema is eating
+cond_wait end:  cvp c03a76c4, cvp->count 0, cvp->owner->next_count 1
+Iter 2, No.3 philosopher_condvar is eating
+cond_signal end: cvp c03a76c4, cvp->count 0, cvp->owner->next_count 0
+Iter 3, No.4 philosopher_condvar is thinking
+phi_test_condvar: state_condvar[0] will eating
+phi_test_condvar: signal self_cv[0] 
+cond_signal begin: cvp c03a7688, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a7688, cvp->count 0, cvp->owner->next_count 1
+Iter 2, No.0 philosopher_condvar is eating
+Iter 3, No.4 philosopher_sema is eating
+Iter 4, No.2 philosopher_sema is thinking
+Iter 4, No.1 philosopher_sema is eating
+Iter 4, No.4 philosopher_sema is thinking
+No.1 philosopher_sema quit
+Iter 3, No.0 philosopher_sema is eating
+Iter 4, No.3 philosopher_sema is eating
+Iter 4, No.0 philosopher_sema is thinking
+Iter 4, No.0 philosopher_sema is eating
+cond_signal end: cvp c03a7688, cvp->count 0, cvp->owner->next_count 0
+Iter 3, No.1 philosopher_condvar is thinking
+Iter 3, No.0 philosopher_condvar is thinking
+cond_wait begin:  cvp c03a76b0, cvp->count 0, cvp->owner->next_count 0
+pid 16 done!.
+cond_wait begin:  cvp c03a76d8, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[2] will eating
+phi_test_condvar: signal self_cv[2] 
+cond_signal begin: cvp c03a76b0, cvp->count 1, cvp->owner->next_count 0
+No.3 philosopher_sema quit
+Iter 4, No.2 philosopher_sema is eating
+cond_wait end:  cvp c03a76b0, cvp->count 0, cvp->owner->next_count 1
+Iter 3, No.2 philosopher_condvar is eating
+cond_signal end: cvp c03a76b0, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[4] will eating
+phi_test_condvar: signal self_cv[4] 
+cond_signal begin: cvp c03a76d8, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a76d8, cvp->count 0, cvp->owner->next_count 1
+Iter 3, No.4 philosopher_condvar is eating
+No.0 philosopher_sema quit
+pid 21 done!.
+Iter 4, No.4 philosopher_sema is eating
+No.4 philosopher_sema quit
+pid 26 done!.
+No.2 philosopher_sema quit
+cond_signal end: cvp c03a76d8, cvp->count 0, cvp->owner->next_count 0
+Iter 3, No.3 philosopher_condvar is thinking
+cond_wait begin:  cvp c03a769c, cvp->count 0, cvp->owner->next_count 0
+cond_wait begin:  cvp c03a7688, cvp->count 0, cvp->owner->next_count 0
+pid 31 done!.
+phi_test_condvar: state_condvar[0] will eating
+phi_test_condvar: signal self_cv[0] 
+cond_signal begin: cvp c03a7688, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a7688, cvp->count 0, cvp->owner->next_count 1
+Iter 3, No.0 philosopher_condvar is eating
+cond_signal end: cvp c03a7688, cvp->count 0, cvp->owner->next_count 0
+Iter 4, No.4 philosopher_condvar is thinking
+Iter 4, No.2 philosopher_condvar is thinking
+phi_test_condvar: state_condvar[3] will eating
+Iter 3, No.3 philosopher_condvar is eating
+phi_test_condvar: state_condvar[1] will eating
+phi_test_condvar: signal self_cv[1] 
+cond_signal begin: cvp c03a769c, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a769c, cvp->count 0, cvp->owner->next_count 1
+Iter 3, No.1 philosopher_condvar is eating
+cond_signal end: cvp c03a769c, cvp->count 0, cvp->owner->next_count 0
+Iter 4, No.0 philosopher_condvar is thinking
+cond_wait begin:  cvp c03a76b0, cvp->count 0, cvp->owner->next_count 0
+Iter 4, No.3 philosopher_condvar is thinking
+phi_test_condvar: state_condvar[4] will eating
+Iter 4, No.4 philosopher_condvar is eating
+phi_test_condvar: state_condvar[2] will eating
+phi_test_condvar: signal self_cv[2] 
+cond_signal begin: cvp c03a76b0, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a76b0, cvp->count 0, cvp->owner->next_count 1
+Iter 4, No.2 philosopher_condvar is eating
+cond_signal end: cvp c03a76b0, cvp->count 0, cvp->owner->next_count 0
+Iter 4, No.1 philosopher_condvar is thinking
+pid 17 done!.
+No.2 philosopher_condvar quit
+cond_wait begin:  cvp c03a7688, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[1] will eating
+Iter 4, No.1 philosopher_condvar is eating
+pid 28 done!.
+cond_wait begin:  cvp c03a76c4, cvp->count 0, cvp->owner->next_count 0
+phi_test_condvar: state_condvar[3] will eating
+phi_test_condvar: signal self_cv[3] 
+cond_signal begin: cvp c03a76c4, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a76c4, cvp->count 0, cvp->owner->next_count 1
+Iter 4, No.3 philosopher_condvar is eating
+cond_signal end: cvp c03a76c4, cvp->count 0, cvp->owner->next_count 0
+No.4 philosopher_condvar quit
+phi_test_condvar: state_condvar[0] will eating
+phi_test_condvar: signal self_cv[0] 
+cond_signal begin: cvp c03a7688, cvp->count 1, cvp->owner->next_count 0
+cond_wait end:  cvp c03a7688, cvp->count 0, cvp->owner->next_count 1
+Iter 4, No.0 philosopher_condvar is eating
+cond_signal end: cvp c03a7688, cvp->count 0, cvp->owner->next_count 0
+No.1 philosopher_condvar quit
+pid 24 done!.
+No.3 philosopher_condvar quit
+No.0 philosopher_condvar quit
+
+```
+
+内核级条件变量机制设计以
+``
+typedef struct monitor{
+    semaphore_t mutex;      // the mutex lock for going into the routines in monitor, should be initialized to 1
+    semaphore_t next;       // the next semaphore is used to down the signaling proc itself, and the other OR wakeuped waiting proc should wake up the sleeped signaling proc.
+    int next_count;         // the number of of sleeped signaling proc
+    condvar_t *cv;          // the condvars in monitor
+} monitor_t;
+```
+为核心，每一个monitor有一个condvar，当一个monitor完成初始化之后，在cond_signal和cond_wait当中进行同步和互斥的操作，道理和PV相类似。
+```
+void 
+cond_signal (condvar_t *cvp) {
+   //LAB7 EXERCISE1: YOUR CODE
+   cprintf("cond_signal begin: cvp %x, cvp->count %d, cvp->owner->next_count %d\n", cvp, cvp->count, cvp->owner->next_count);  
+  /*
+   *      cond_signal(cv) {
+   *          if(cv.count>0) {
+   *             mt.next_count ++;
+   *             signal(cv.sem);
+   *             wait(mt.next);
+   *             mt.next_count--;
+   *          }
+   *       }
+   */
+   struct monitor* mon = cvp->owner;
+   if (cvp->count > 0){
+          mon->next_count ++;
+          up(&(cvp->sem));
+          down(&(mon->next));
+          mon->next_count --;
+   }
+   cprintf("cond_signal end: cvp %x, cvp->count %d, cvp->owner->next_count %d\n", cvp, cvp->count, cvp->owner->next_count);
+}
+```
+```
+void
+cond_wait (condvar_t *cvp) {
+    //LAB7 EXERCISE1: YOUR CODE
+    cprintf("cond_wait begin:  cvp %x, cvp->count %d, cvp->owner->next_count %d\n", cvp, cvp->count, cvp->owner->next_count);
+   /*
+    *         cv.count ++;
+    *         if(mt.next_count>0)
+    *            signal(mt.next)
+    *         else
+    *            signal(mt.mutex);
+    *         wait(cv.sem);
+    *         cv.count --;
+    */
+    struct monitor* mon = cvp->owner;
+    cvp->count ++;
+      if (mon->next_count > 0){
+          up(&(mon->next));
+      }
+      else{
+          up(&(mon->mutex));
+      }
+      down(&(cvp->sem));
+      cvp->count --;
+    cprintf("cond_wait end:  cvp %x, cvp->count %d, cvp->owner->next_count %d\n", cvp, cvp->count, cvp->owner->next_count);
+}
+
+```
+ 
+用户态线程的条件变量的实现也是使用一个虚拟的用户态条件变量，当需要进行条件变量的操作的时候进行中断转换到内核态对于一个构建的内核的条件变量进行操作，其实类似于上一个练习当中的问题，使用的是切换转换的方法。
