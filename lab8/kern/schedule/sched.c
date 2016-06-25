@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <default_sched.h>
 
+// the list of timer
 static list_entry_t timer_list;
 
 static struct sched_class *sched_class;
@@ -29,7 +30,7 @@ sched_class_pick_next(void) {
     return sched_class->pick_next(rq);
 }
 
-static void
+void
 sched_class_proc_tick(struct proc_struct *proc) {
     if (proc != idleproc) {
         sched_class->proc_tick(rq, proc);
@@ -40,15 +41,16 @@ sched_class_proc_tick(struct proc_struct *proc) {
 }
 
 static struct run_queue __rq;
+extern struct sched_class stride_sched_class;
 
 void
 sched_init(void) {
     list_init(&timer_list);
 
-    sched_class = &default_sched_class;
+    sched_class = &stride_sched_class;
 
     rq = &__rq;
-    rq->max_time_slice = 5;
+    rq->max_time_slice = MAX_TIME_SLICE;
     sched_class->init(rq);
 
     cprintf("sched class: %s\n", sched_class->name);
@@ -120,6 +122,7 @@ add_timer(timer_t *timer) {
     local_intr_restore(intr_flag);
 }
 
+// del timer from timer_list
 void
 del_timer(timer_t *timer) {
     bool intr_flag;
@@ -139,6 +142,7 @@ del_timer(timer_t *timer) {
     local_intr_restore(intr_flag);
 }
 
+// call scheduler to update tick related info, and check the timer is expired? If expired, then wakup proc
 void
 run_timer_list(void) {
     bool intr_flag;
